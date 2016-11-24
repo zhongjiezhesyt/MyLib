@@ -13,7 +13,7 @@ WindowLayer = {
 
 function CUIManager:ctor()
 	
-	--[[行为队列：tCommandQueue
+	--[[行为队列:tCommandQueue
 		由于窗口的打开是一个过程（包括资源的异步加载和动画过程），
 		所以在同一帧连续调用ShowWindow是没法同时进行的，需要排队.
 		不然的话会造成同时Show两个不同的窗口时，实际的打开顺序依赖于谁的资源加载的快（回调先回来），而造成混乱。
@@ -21,22 +21,33 @@ function CUIManager:ctor()
 		同时，在同一时间show和close一个窗口会发生什么行为？如果不加入队列，也是不可控的。
 	]]
 	self.tCommandQueue = {}
+	--窗口命令类型
 	self.CommandType = {
 		Show = 1,
 		Close = 2,
 	}
 	
-	--窗口的实例缓存
+	--窗口的实例缓存池
 	self.WindowInstanceMap = {}
 	
-	--
-	self.WindowStackList = {
+	--[[
+		窗口栈:WindowMuiltyStack
+		每个可视的层级维护一个单独的栈,
+		当前有几个可视的Win，就有几个层级，也就是有几个栈
+		每一级栈的栈顶元素就是当前这个层级的可视Win
+		默认规则：
+		打开新的Win的时候：
+		如果新打开的窗口的层级小于或等于当前“激活的”窗口（也就是最高层级的栈的栈顶win），则在同层的栈入栈，同时隐藏原来同层的“激活的”Win，新打开的Win被设置成“激活的”
+		如果新打开的窗口的层级大于当前“活动的”窗口，则在新的更高层的栈入栈，原来层级的栈顶Win因为还是可见的，所以不需要隐藏，新打开的Win被设置成“激活的”
 		
-	}
+		当然，由于可能存在一些特殊需求的窗口逻辑，打开新对话框时的遮挡关系，也可以通过Show时的参数tShowArg来控制，使其不受其默认定义的层级的控制。
+		
+	]]
+	self.WindowMuiltyStack = {}
 	
 	--“正在打开”的窗口(因为第一次加载窗口资源是异步的)
 	--self.OpeningWindow = nil
-	--当前活动的Win
+	--当前激活的Win
 	self.ActivedWin = nil
 end
 
@@ -47,6 +58,13 @@ end
 	strWinID：要打开的窗口
 	winArg：传递给窗口的参数
 	showArg:控制窗口显示的参数
+	
+	tShowArg支持的参数：
+		IsUsingToperLayer: 
+			true:使用更高的层级打开窗口，效果就是在当前窗口之上打开新窗口，视觉上覆盖，但不影响当前窗口；
+		IsUsingCurrentLayer:
+			true:使用当前最高的层级打开窗口，效果就是新窗口的打开会隐藏当前活动的窗口（因为两个是同级）（IsUsingToperLayer优先级高于IsUsingToperLayer）
+			
 ]]
 function CUIManager:ShowWindow(strWinID,winArg,tShowArg)
 	
@@ -65,16 +83,20 @@ function CUIManager:ShowWindow(strWinID,winArg,tShowArg)
 		return
 	end
 	
-	self:ProcessCommand(tShowCommand)
+	--开启触控屏蔽（在开启窗口的过程中，禁止玩家操作）
+	self:setIsTouchEnbale(false)
+	
+	--执行窗口任务
+	self:processCommand(tShowCommand)
 end
 
 
---获取当“可见”的的窗口列表
+--获取当“可见”的的窗口列表,也就是获取每一级栈的栈顶元素
 function CUIManager:GetVisibleWindows()
 	
 	local tWinIDList= {}
 	
-	for _,tWindowStack in ipairs(self.WindowStackList) do
+	for _,tWindowStack in ipairs(self.WindowMuiltyStack) do
 		local nLenth = #tWindowStack
 		if nLenth > 0 then
 			table.insert(tWinIDList,tWindowStack[nLenth])
@@ -84,7 +106,7 @@ function CUIManager:GetVisibleWindows()
 	return tWinIDList
 end
 
---获取当“活动的”的窗口列表
+--获取当“激活的”的窗口
 function CUIManager:GetActivedWindow()
 	return self.ActivedWin
 end
@@ -101,13 +123,13 @@ function CUIManager:RefreshWin(strWinID,winArg,tShowArg)
 		return
 	end
 	
-	--do someing here
+	--do something here
 end
 
 
 --private:
 
---获取对话框的“类”（CUIBase实例）
+--获取对话框的“类”（CUIBase实例）(单例)
 function CUIManager:getWinClassInstance(strWinID)
 	local tWinClassInstance = self.WindowInstanceMap[strWinID]
 	
@@ -119,19 +141,20 @@ function CUIManager:getWinClassInstance(strWinID)
 		if _G[strClassName] == nil then
 			DEBUG_LOG("CUIManager:ShowDialog","Can Not Find Window Class:",strWinID,strClassName)
 		else
-			tWinClassInstance = _G[strClassName]()--是这样实例化吗？
-			self.WindowInstanceMap[strWinID] = tWinClassInstance
-			--tWinClassInstance:Init()--暂时不需要，类的初始化在构造函数就可以了
+			--实例化
+			local strResourceName = ModuleType[strWinID]["ResourceName"]
+			tWinClassInstance = _G[strClassName](strWinID,strResourceName)
 			
-			--这里自动将窗口id保存在各自窗口的实例中
-			tWinClassInstance.ModuleTypeID = strWinID
+			--单例缓存起来
+			self.WindowInstanceMap[strWinID] = tWinClassInstance
+			
 		end
 	end
 	
 	return tWinClassInstance
 end
 
-
+--执行窗口任务
 function CUIManager:processCommand(tCommand)
 	
 	if tCommand.CommandType == self.CommandType.Show then
@@ -172,8 +195,8 @@ function CUIManager:processShowCommand(tShowCommand)
 	
 	--对于当前“可见的”窗口，不需要重新打开
 	local tVisibleWinList = self:GetVisibleWindows()
-	for _,strActivedID in ipairs(tVisibleWinList) do
-		if strActivedID == strWinID then
+	for _,strVisibleID in ipairs(tVisibleWinList) do
+		if strVisibleID == strWinID then
 			DEBUG_LOG("CUIManager:ShowWindow","This Win Is Actived:",strWinID)
 			--需要重新刷一下吗？
 			--self:RefreshWin(strWinID,winArg,tShowArg)
@@ -181,11 +204,138 @@ function CUIManager:processShowCommand(tShowCommand)
 		end
 	end
 	
+	--加载对话框资源
+	local strUiResources = tWinClassInstance:GetUiResources()
+	
+	--[[--入栈
+	if tShowArg then
+		--如果用户想手动控制显示方式，则使用用户自定义的参数
+		if tShowArg.IsUsingToperLayer then
+			self:pushStack(tShowCommand,false)
+		elseif tShowArg.IsUsingCurrentLayer then
+			self:pushStack(tShowCommand,true)
+		end 
+	else  
+		--如果没有使用自定义规则，则按Win的默认层级规则显示
+	end--]]
+	
+	
 end
 
 
 function CUIManager:processCloseCommand(tCloseCommand)
+	
+end
 
+
+--设置是否响应点击事件
+function CUIManager:setIsTouchEnbale(bCanTouch)
+	--调用引擎相关接口
+	
+end
+
+function CUIManager:LoadUIRes(strUiResources,fCallBack)
+	
+	--UIResLoadingManager没看过，不了解，
+	--这里做了一个假设：
+	--如果对于已经加载过的资源，UIResLoadingManager会直接从资源缓存里直接返回
+	--也就是说资源的管理是UIResLoadingManager的职责，我这里不管，每次都去Load就好了。
+	
+	--[[
+		--正常应该是这样简单地：
+		UIResLoadingManager:LoadUIRes(strUiResources, fCallBack)
+	]]
+	
+	--但是对于UIResLoadingManager这里有个需求就是，资源的Create和Release要通过事件通知出来，因为UI是对资源敏感的！
+	--比如当资源第一次被加载的时候做一些初始化；
+	--当资源被释放的时候（比若说切换场景、比如说因内存不足被系统释放），都要通知出来，要不UI层不知道的话会访问到已经释放的资源，会蹦！
+	
+	--所以我先自己维护一下资源的生命周期管理，以后还是要用UIResLoadingManager的：
+	
+	--[[
+		--临时代码
+		if self.UiResourcesMap == nil then
+			self.UiResourcesMap = {}
+		end
+		
+		if self.UiResourcesMap[strUiResources] then
+			--如果已经加载过，直接返回
+			fCallBack()
+		else
+			local cb = function ()
+				fCallBack()
+			end
+			
+			
+			UIResLoadingManager:LoadUIRes(strUiResources, fCallBack)
+		end
+	]]
+end
+
+-------------
+--栈操作接口：
+-------------
+--获取层数
+function CUIManager:getDepthOfStack()
+	return #self.WindowMuiltyStack
+end
+
+--获取层级最高的栈
+--(注意！是获取最高层级的栈，不是获取栈顶元素)
+function CUIManager:getTopStack()
+	return self.WindowMuiltyStack[#self.WindowMuiltyStack]
+end
+
+--获取栈顶的元素(最高层级的栈的栈顶)
+function CUIManager:getStackTop()
+	local tTopElement = nil
+	local tTopStack = self:getTopStack()
+	if tTopStack then
+		tTopElement = tTopStack[#tTopStack]
+	end
+	
+	return tTopElement
+end
+
+--根据Win的层级，使用默认的层级规则入栈
+function CUIManager:pushStackWithLayer(tShowCommand)
+	local tTopElement = self:getStackTop()
+	if tTopElement == nil then
+		--空栈，直接插入
+		self:pushStack(tShowCommand,true)
+		return
+	end
+	
+	local nLastLayer = tTopElement.
+	
+end
+
+--入栈
+function CUIManager:pushStack(tShowCommand,bInSameLayer)
+	local tLastCommand = nil
+	
+	bInSameLayer = bInSameLayer or true
+	
+	local nDepthOfStack = self:getDepthOfStack()
+	if nDepthOfStack < 1 then
+		--如果当前没有层级，只能添加在新建的层级
+		self.WindowMuiltyStack[1] = {tShowCommand}
+	else
+		if bInSameLayer then
+			--使用当前层级
+			local tTopStack = self:getTopStack()
+			tLastCommand = tTopStack[#tTopStack]
+			table.insert(tTopStack,tShowCommand)
+		else
+			--新建更高的层级
+			local tNewTopStack = {}
+			table.insert(tNewTopStack,tShowCommand)
+			table.insert(self.WindowMuiltyStack,tNewTopStack)
+		end
+	end
+	
+	--返回被覆盖的上一个元素,先getStackTop再push也可以，这里返回为了方便
+	return tLastCommand
 end
 
 
