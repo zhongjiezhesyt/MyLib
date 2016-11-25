@@ -1,0 +1,88 @@
+CUIBase = class()
+
+
+function CUIBase:ctor(strWinID,strResourceName)
+	self.id = strWinID
+	self.uiResources = strResourceName
+	
+	--prefab对象
+	self.uiObject = nil
+end
+
+--------------------------------------
+--状态、属性相关获取函数
+--------------------------------------
+function CUIBase:GetId()
+	return self.id
+end
+
+function CUIBase:GetUiResources()
+	return self.uiResources
+end
+
+function CUIBase:IsInited()
+	if self.uiObject == nil then
+		return false
+	end
+	
+	return true
+end
+
+function CUIBase:GetLayer()
+	return self.Layer
+end
+
+--------------------------------------
+--生命周期管理
+--------------------------------------
+--资源加载完成之后做资源的初始化
+function CUIBase:Init(uiObject)
+	self.uiObject = uiObject
+	
+	--记录原始状态:
+	self.rectTransform = uiObject:GetComponent("RectTransform")
+	--读取编辑器中预定义的层级
+	self.Layer = uiObject:GetComponent("Characteristic").Layer
+	
+	--自定义动画类型
+	self.AnimationType = uiObject:GetComponent("Characteristic").AnimationType
+	
+	--这里还要做很多其他初始化。。。
+	
+	--调用子类实现的虚函数 
+	self:onInit()
+end
+
+
+
+
+
+
+--------------------------------------
+--生命周期回调函数（需要子类overwrite的虚函数）
+--------------------------------------
+--资源第一次被加加载完成时被调用
+function CUIBase:onInit() end
+
+--资源第一次被加加载完成时被调用
+function CUIBase:onInit() end
+
+--资源第一次被加加载完成时被调用
+function CUIBase:onInit() end
+
+--资源第一次被加加载完成时被调用
+function CUIBase:onInit() end
+
+--资源第一次被加加载完成时被调用
+function CUIBase:onInit() end
+
+
+
+
+
+---------------------------------------------------------------------------------------------------------
+--demo:
+---------------------------------------------------------------------------------------------------------
+CUITest = class(CUIBase)--继承于CUIBase
+
+
