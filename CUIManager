@@ -11,6 +11,24 @@ WindowLayer = {
 	System = 5
 }
 
+--窗口的打开过程可以使用预定义的动画效果
+--使用的动画效果可以再三个地方定义，优先级：每次打开时的参数 > 每个窗口对象自定义属性 > 每个窗口所属层级的默认动画类型
+WinAnimationType = {
+	None = 0,
+	FadeInOut = 1,--淡入、淡出
+	ScaleInOut = 2,--弹出、缩回
+	--.....
+}
+
+--每个层级默认的动画类型
+DefultLayerWinAnimationType = {
+	[WindowLayer.FullScreen] = WinAnimationType.FadeInOut,
+	[WindowLayer.Popup] = WinAnimationType.FadeInOut,
+	[WindowLayer.MassegeBox] = WinAnimationType.FadeInOut,
+	[WindowLayer.Tips] = WinAnimationType.FadeInOut,
+	[WindowLayer.System] = WinAnimationType.FadeInOut,
+}
+
 function CUIManager:ctor()
 	
 	--[[行为队列:tCommandQueue
@@ -64,6 +82,9 @@ end
 			true:使用更高的层级打开窗口，效果就是在当前窗口之上打开新窗口，视觉上覆盖，但不影响当前窗口；
 		IsUsingCurrentLayer:
 			true:使用当前最高的层级打开窗口，效果就是新窗口的打开会隐藏当前活动的窗口（因为两个是同级）（IsUsingToperLayer优先级高于IsUsingToperLayer）
+			
+		AnimationType:
+			此次打开窗口使用的动画类型
 			
 ]]
 function CUIManager:ShowWindow(strWinID,winArg,tShowArg)
@@ -123,7 +144,7 @@ function CUIManager:RefreshWin(strWinID,winArg,tShowArg)
 		return
 	end
 	
-	--do something here
+	--do something here to Refresh
 end
 
 
@@ -170,8 +191,7 @@ end
 function CUIManager:processShowCommand(tShowCommand)
 	
 	local strWinID = tShowCommand.WinID
-	local tShowArg = tShowCommand.ShowArg
-	local winArg = tShowCommand.WinArg
+	
 
 	--查找对话框定义
 	local ModuleType = ModuleType
@@ -204,10 +224,31 @@ function CUIManager:processShowCommand(tShowCommand)
 		end
 	end
 	
-	--加载对话框资源
-	local strUiResources = tWinClassInstance:GetUiResources()
 	
-	--[[--入栈
+	if tWinClassInstance:IsInited() then
+		--加载资源
+		local strUiResources = tWinClassInstance:GetUiResources()
+		local cb = function (uiObject)
+			--资源死一次加载完成，执行初始化
+			tWinClassInstance:Init(uiObject)
+			self:doShow(tWinClassInstance,tShowCommand)
+		end
+		self:LoadUIRes(strUiResources,cb)
+	else
+		--已经加载
+		
+		self:doShow(tWinClassInstance,tShowCommand)
+	end
+
+end
+
+--资源加载完成后真正的显示
+function CUIManager:doShow(tWinClassInstance,tShowCommand)
+	
+	local tShowArg = tShowCommand.ShowArg
+	local winArg = tShowCommand.WinArg
+	
+	--入栈
 	if tShowArg then
 		--如果用户想手动控制显示方式，则使用用户自定义的参数
 		if tShowArg.IsUsingToperLayer then
@@ -217,21 +258,23 @@ function CUIManager:processShowCommand(tShowCommand)
 		end 
 	else  
 		--如果没有使用自定义规则，则按Win的默认层级规则显示
-	end--]]
+		local nLayer = tWinClassInstance:GetLayer()
+		self:pushStackWithLayer(tShowCommand,nLayer)
+	end
 	
+	
+	--播放窗口打开动画：
 	
 end
 
 
-function CUIManager:processCloseCommand(tCloseCommand)
-	
-end
+
 
 
 --设置是否响应点击事件
 function CUIManager:setIsTouchEnbale(bCanTouch)
 	--调用引擎相关接口
-	
+	--使屏幕不再相应点击事件
 end
 
 function CUIManager:LoadUIRes(strUiResources,fCallBack)
@@ -249,27 +292,36 @@ function CUIManager:LoadUIRes(strUiResources,fCallBack)
 	--但是对于UIResLoadingManager这里有个需求就是，资源的Create和Release要通过事件通知出来，因为UI是对资源敏感的！
 	--比如当资源第一次被加载的时候做一些初始化；
 	--当资源被释放的时候（比若说切换场景、比如说因内存不足被系统释放），都要通知出来，要不UI层不知道的话会访问到已经释放的资源，会蹦！
+
+end
+
+--
+function CUIManager:PlayOpeningAnimation(tWinClassInstance,tShowCommand)
+	--
+	local nAnimationType = nil
 	
-	--所以我先自己维护一下资源的生命周期管理，以后还是要用UIResLoadingManager的：
+	if tShowCommand.AnimationType ~= nil then--优先使用本次调用的参数
+		nAnimationType = tShowCommand.AnimationType
+	elseif tWinClassInstance.AnimationType ~= nil then--使用编辑器里定义的动画类型
+		nAnimationType = tWinClassInstance.AnimationType
+	else
+		--最后使用窗口所处层级的默认动画类型
+		local nLayer = tWinClassInstance:GetLayer()
+		nAnimationType = DefultLayerWinAnimationType[nLayer]
+	end
 	
-	--[[
-		--临时代码
-		if self.UiResourcesMap == nil then
-			self.UiResourcesMap = {}
-		end
-		
-		if self.UiResourcesMap[strUiResources] then
-			--如果已经加载过，直接返回
-			fCallBack()
-		else
-			local cb = function ()
-				fCallBack()
-			end
-			
-			
-			UIResLoadingManager:LoadUIRes(strUiResources, fCallBack)
-		end
-	]]
+	--然后根据动画类型，调用相关的动画，并设置回调函数为：
+	--
+end
+
+function CUIManager:PlayOpeningAnimation(tWinClassInstance,tShowCommand)()
+
+end
+
+
+
+function CUIManager:processCloseCommand(tCloseCommand)
+	
 end
 
 -------------
@@ -298,7 +350,7 @@ function CUIManager:getStackTop()
 end
 
 --根据Win的层级，使用默认的层级规则入栈
-function CUIManager:pushStackWithLayer(tShowCommand)
+function CUIManager:pushStackWithLayer(tShowCommand,nLayer)
 	local tTopElement = self:getStackTop()
 	if tTopElement == nil then
 		--空栈，直接插入
@@ -306,8 +358,17 @@ function CUIManager:pushStackWithLayer(tShowCommand)
 		return
 	end
 	
-	local nLastLayer = tTopElement.
+	--获取上一个的层级
+	local tLastInstance = self:getWinClassInstance(tTopElement.WinID)
+	local nLastLayer = tLastInstance:GetLayer()
 	
+	--如果新打开的窗口的层级比上一个窗口的层级高，则用更高的层级打开新窗口
+	--否则，在当前层级打开新窗口
+	if nLayer > nLastLayer then
+		self:pushStack(tShowCommand,false)
+	else
+		self:pushStack(tShowCommand,true)
+	end
 end
 
 --入栈
