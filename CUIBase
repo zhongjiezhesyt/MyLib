@@ -1,5 +1,11 @@
+--sunyutao
 CUIBase = class()
 
+WinState = {
+	NoLoad = 1,
+	Loaded = 2,
+	
+}
 
 function CUIBase:ctor(strWinID,strResourceName)
 	self.id = strWinID
@@ -7,6 +13,12 @@ function CUIBase:ctor(strWinID,strResourceName)
 	
 	--prefab对象
 	self.uiObject = nil
+	
+	self.isVisible = false
+	self.isShow = false
+	self.isInit = false
+	
+	self.UIManager = _G.CUIManager()
 end
 
 --------------------------------------
@@ -36,7 +48,7 @@ end
 --生命周期管理
 --------------------------------------
 --资源加载完成之后做资源的初始化
-function CUIBase:Init(uiObject)
+function CUIBase:InitResource(uiObject)
 	self.uiObject = uiObject
 	
 	--记录原始状态:
@@ -50,31 +62,78 @@ function CUIBase:Init(uiObject)
 	--这里还要做很多其他初始化。。。
 	
 	--调用子类实现的虚函数 
-	self:onInit()
+	self.isInit = true
+end
+
+--设置显示状态
+--[[function CUIBase:SetInIt(bIn)
+	self.isInit = bIn
+end--]]
+--设置显示状态,表示触发过onVisible，还没有触发onClose
+function CUIBase:SetVisible(bVisible)
+	--设置
+	if self.uiObject then
+		--self.uiObject:GetComponent("Canvas").SetVisible(bVisible)
+		self.isVisible = bVisible
+	end
+end
+
+--设置显示状态,表示触发过onShow，还没有触发onHide
+function CUIBase:Show(winArg)
+	
+	if self.isShow == true then
+		return 
+	end
+	self.isShow = true
+	self:onShow(winArg)
+	self.UIManager:postUIEevent(WinEvent.OnWinShow,self.id)
+end
+
+--设置显示状态,表示触发过onShow，还没有触发onHide
+function CUIBase:Start(winArg)
+	
+	if self.isStart == true then
+		return 
+	end
+	self.isStart = true
+	self:onStart(winArg)
+	self.UIManager:postUIEevent(WinEvent.OnWinShow,self.id)
 end
 
 
-
-
+--[[function CUIBase:IsInit()
+	return self.isInit
+end
+--
+function CUIBase:IsStart()
+	return self.isStart
+end
+--
+function CUIBase:IsShow()
+	return self.isShow
+end--]]
 
 
 --------------------------------------
 --生命周期回调函数（需要子类overwrite的虚函数）
 --------------------------------------
 --资源第一次被加加载完成时被调用
-function CUIBase:onInit() end
+function CUIBase:onCreate() end
 
 --资源第一次被加加载完成时被调用
-function CUIBase:onInit() end
+function CUIBase:onShow() end
 
 --资源第一次被加加载完成时被调用
-function CUIBase:onInit() end
+function CUIBase:onStart() end
 
 --资源第一次被加加载完成时被调用
-function CUIBase:onInit() end
+function CUIBase:onStop() end
 
 --资源第一次被加加载完成时被调用
-function CUIBase:onInit() end
+function CUIBase:onClose() end
+
+--资源第一次被加加载完成时被调用
+function CUIBase:onRelease() end
 
 
 
