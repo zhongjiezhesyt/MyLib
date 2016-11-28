@@ -14,9 +14,11 @@ function CUIBase:ctor(strWinID,strResourceName)
 	--prefab对象
 	self.uiObject = nil
 	
-	self.isVisible = false
-	self.isShow = false
+	
+	
 	self.isInit = false
+	self.isShow = false
+	self.isStart = false
 	
 	self.UIManager = _G.CUIManager()
 end
@@ -49,6 +51,11 @@ end
 --------------------------------------
 --资源加载完成之后做资源的初始化
 function CUIBase:InitResource(uiObject)
+	
+	if isInit then
+		return
+	end
+	
 	self.uiObject = uiObject
 	
 	--记录原始状态:
@@ -61,24 +68,16 @@ function CUIBase:InitResource(uiObject)
 	
 	--这里还要做很多其他初始化。。。
 	
+	
+	self:onInit()
+	
 	--调用子类实现的虚函数 
 	self.isInit = true
+	
+	self:postUIEevent(WinEvent.OnWinCreate,self.id)
 end
 
---设置显示状态
---[[function CUIBase:SetInIt(bIn)
-	self.isInit = bIn
-end--]]
---设置显示状态,表示触发过onVisible，还没有触发onClose
-function CUIBase:SetVisible(bVisible)
-	--设置
-	if self.uiObject then
-		--self.uiObject:GetComponent("Canvas").SetVisible(bVisible)
-		self.isVisible = bVisible
-	end
-end
-
---设置显示状态,表示触发过onShow，还没有触发onHide
+--
 function CUIBase:Show(winArg)
 	
 	if self.isShow == true then
@@ -89,7 +88,7 @@ function CUIBase:Show(winArg)
 	self.UIManager:postUIEevent(WinEvent.OnWinShow,self.id)
 end
 
---设置显示状态,表示触发过onShow，还没有触发onHide
+--
 function CUIBase:Start(winArg)
 	
 	if self.isStart == true then
@@ -97,21 +96,65 @@ function CUIBase:Start(winArg)
 	end
 	self.isStart = true
 	self:onStart(winArg)
-	self.UIManager:postUIEevent(WinEvent.OnWinShow,self.id)
+	self.UIManager:postUIEevent(WinEvent.OnWinStart,self.id)
+end
+
+--
+function CUIBase:Stop()
+	
+	if not self.isStart then
+		return 
+	end
+	self:onStop()
+	self.isStart = false
+	self:postUIEevent(WinEvent.OnWinStop,self.id)
+	
+end
+
+--
+function CUIBase:Close()
+	
+	if not self.isShow then
+		return 
+	end
+	
+	if self.isStart then
+		return 
+	end
+	
+	self:onClose()
+	self.isShow = false
+	self:postUIEevent(WinEvent.OnWinClose,self.id)
+	
+end
+
+--
+function CUIBase:Release()
+	
+	if not self.isInit then
+		return 
+	end
+	
+	if self.isShow then
+		return 
+	end
+	
+	self:onRelease()
+	self.isInit = false
+	self:postUIEevent(WinEvent.OnWinRelease,self.id)
+	
 end
 
 
---[[function CUIBase:IsInit()
-	return self.isInit
-end
+
 --
-function CUIBase:IsStart()
-	return self.isStart
+function CUIBase:SetVisible(bVisible)
+	--设置
+	if self.uiObject then
+		--self.uiObject:GetComponent("Canvas").SetVisible(bVisible)
+		self.isVisible = bVisible
+	end
 end
---
-function CUIBase:IsShow()
-	return self.isShow
-end--]]
 
 
 --------------------------------------
