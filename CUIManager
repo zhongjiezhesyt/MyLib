@@ -43,7 +43,7 @@ WinEvent = {
 	OnWinStop = "OnWinStop",--窗口被同级的窗口暂停时，或者窗口在关闭时播放关闭动画前
 	OnWinClose = "OnWinClose",--窗口被关闭时，此时关闭动画播放结束，并出栈
 	OnWinRelease = "OnWinRelease",--窗口资源被销毁时，一般发生在场景切换时（这个要依赖于资源管理器的实现）
-	--注：六大生命周期函数是成对出现的：OnWinCreate和OnWinRelease，OnWinVisble和OnWinInVisible，OnWinShow和OnWinHide
+	--注：六大生命周期函数是成对出现的：
 	--在这六个事件触发的时候会触发对应窗口（CUIBase）的六个回调函数：
 	--具体请参见CUIBase
 	
@@ -91,6 +91,7 @@ function CUIManager:ctor()
 	--self.OpeningWindow = nil
 	--当前激活的Win
 	self.ActivedWin = nil
+	self.IsTouchEnbale = true
 end
 
 
@@ -120,11 +121,11 @@ function CUIManager:ShowWindow(strWinID,winArg,tShowArg)
 		ShowArg = tShowArg,
 		CommandType = self.CommandType.Show
 	}
-	table.insert(tCommandQueue,tShowCommand)
+	table.insert(self.tCommandQueue,tShowCommand)
 	
 	--如果当前处理队列还有没结束的任务，退出，等待当前任务执行完再去执行
-	if #tCommandQueue > 0 then
-		DEBUG_LOG("CUIManager:ShowWindow","Can Not Show Window When Another WinCommand Is Doing:",strWinID,tCommandQueue[1].WinID)
+	if #self.tCommandQueue > 0 then
+		--DEBUG_LOG("CUIManager:ShowWindow","Can Not Show Window When Another WinCommand Is Doing:",strWinID,self.tCommandQueue[1].WinID)
 		return
 	end
 	
@@ -136,13 +137,41 @@ function CUIManager:ShowWindow(strWinID,winArg,tShowArg)
 end
 
 
-function CUIManager:CloseWindow(strWinID)
+--[[function CUIManager:CloseWindow(strWinID)
 	
+	--默认关闭当前窗口
+	if strWinID == nil then
+		strWinID = self.ActivedWin
+	end
+
+end--]]
+
+--关闭当前并返回上一个界面
+function CUIManager:CloseBack()
+	
+	local tBackCommand = {
+		CommandType = self.CommandType.Back
+	}
+	table.insert(self.tCommandQueue,tBackCommand)
+	
+	--如果当前处理队列还有没结束的任务，退出，等待当前任务执行完再去执行
+	if #self.tCommandQueue > 0 then
+		--DEBUG_LOG("CUIManager:CloseAndBack","Can Not CloseAndBack Window When Another WinCommand Is Doing:",strWinID,self.tCommandQueue[1].WinID)
+		return
+	end
+	
+	--开启触控屏蔽（在开启窗口的过程中，禁止玩家操作）
+	self:setIsTouchEnbale(false)
+	
+	--执行窗口任务
+	self:processCommand(tBackCommand)
 end
 
 --nDepth关闭哪一层，默认关闭最高层.正数从栈底开始，负数从栈顶开始数。比如，默认栈顶就是-1
 function CUIManager:CloseLayer(nDepth)
 	nDepth = nDepth or 0-1
+	
+	
 	
 	local nCurrentDepth = self:getDepthOfStack()
 	--[[if nDepth > nCurrentDepth then
@@ -162,8 +191,14 @@ function CUIManager:CloseLayer(nDepth)
 		return 
 	end
 	
-	for ,v in ipairs() do
-	
+	for _,tCom in ipairs(tStack) do
+		local uiInstance = self:getWinClassInstance(tCom.WinID)
+		if uiInstance.isStart then
+			uiInstance:Stop()
+			uiInstance:Close()
+		elseif uiInstance.isShow then
+			uiInstance:Close()
+		end
 	end
 	
 end
@@ -277,37 +312,29 @@ function CUIManager:processShowCommand(tShowCommand)
 			else
 				--对于已经在栈中，将其关闭并从栈中移除
 				if tShowCommand.WinID == strWinID then
-					if tWinClassInstance:IsInShow() then
-						
+					if tWinClassInstance:isStart then
+						tWinClassInstance:Stop()
+					elseif tWinClassInstance.isShow then
+						tWinClassInstance:Close()
 					end
-				
+					
+					table.remove(tWindowStack,i)
 				end
 			end
 			
 		end
 	end
 	
-	local tVisibleWinList = self:GetVisibleWindows()
-	for _,strVisibleID in ipairs(tVisibleWinList) do
-		if strVisibleID == strWinID then
-			DEBUG_LOG("CUIManager:ShowWindow","This Win Is Actived:",strWinID)
-			--需要重新刷一下吗？
-			--self:RefreshWin(strWinID,winArg,tShowArg)
-			return
-		end
-	end
-	
 	--
 	
-	if tWinClassInstance:IsInited() then
+	if not tWinClassInstance.isInit then
 		--加载资源
 		local strUiResources = tWinClassInstance:GetUiResources()
 		
 		--资源加载完成回调
 		local cb = function (uiObject)
 			--资源死一次加载完成，执行初始化
-			
-			self:changeWinState(tWinClassInstance,WinEvent.OnWinCreate,uiObject)--tWinClassInstance:Init(uiObject)
+			tWinClassInstance:InitResource(uiObject)
 			
 			self:doShow(tWinClassInstance,tShowCommand)
 			
@@ -343,8 +370,10 @@ function CUIManager:doShow(tWinClassInstance,tShowCommand)
 		tLastSameLayerWinC = self:pushStackWithLayer(tShowCommand,nLayer)
 	end
 	
-	self:changeWinState(tWinClassInstance,WinEvent.OnWinVisible,winArg)
+	tWinClassInstance:SetVisible(true)
+	tWinClassInstance:Show(winArg)
 	
+	self.ActivedWin = tShowCommand.WinID
 	--播放窗口打开动画：
 	self:playOpeningAnimation(tWinClassInstance,tShowCommand,tLastSameLayerWinC)
 
@@ -353,6 +382,8 @@ end
 
 --设置是否响应点击事件
 function CUIManager:setIsTouchEnbale(bCanTouch)
+	
+	self.IsTouchEnbale = bCanTouch
 	--调用引擎相关接口
 	--使屏幕不再相应点击事件
 end
@@ -390,6 +421,9 @@ function CUIManager:playOpeningAnimation(tWinClassInstance,tShowCommand,tLastSam
 		nAnimationType = DefultLayerWinAnimationType[nLayer]
 	end
 	
+	--记录下来
+	tShowCommand.AnimationType = nAnimationType
+	
 	--然后根据动画类型，调用相关的动画，并设置回调函数为:onOpeningAnimationFinish
 	--runAnimationWithCallback(nAnimationType,self.onOpeningAnimationFinish)
 	
@@ -397,23 +431,25 @@ end
 
 --播放窗口打开动画结束回调
 function CUIManager:onOpeningAnimationFinish(tWinClassInstance,tShowCommand,tLastSameLayerWinC)
-
-	self:changeWinState(tWinClassInstance,WinEvent.OnWinShow,tShowCommand.WinArg)
+	
+	tWinClassInstance:Start(tShowCommand.WinArg)
 	
 	--当一个新的窗口被打开时：同级的上一个窗口被“隐藏”
 	if tLastSameLayerWinC ~= nil then
 		local tLastInstance = self:getWinClassInstance(tLastSameLayerWinC.WinID)
-		self:changeWinState(tLastInstance,WinEvent.OnWinHide)
+		tLastInstance:SetVisible(false)
+		tLastInstance:Stop()
 	else
 		--如果同层级的没有“上一个”，则上一个层级的的被Over
 		local ndepth = self:getDepthOfStack()
 		local tLastLayerStack = self.WindowMuiltyStack[ndepth - 1]
 		if tLastLayerStack ~= nil then
 			local tLastLayerTop = tLastLayerStack[#tLastLayerStack]
-			--[[if tLastLayerTop~= nil then
+			if tLastLayerTop~= nil then
 				local bOveredInstance = self:getWinClassInstance(tLastLayerTop.WinID)
-			end--]]
-			self:postUIEevent(WinEvent.OnWinBeOver,tLastLayerTop.WinID)
+				self:postUIEevent(WinEvent.OnWinBeOver,tLastLayerTop.WinID)
+			end
+			
 		end
 	end
 	
@@ -439,68 +475,41 @@ end
 
 --执行窗返回任务
 function CUIManager:processBackCommand(tBackCommand)
+		
+	local tTop = self:popStack()
+	if tTop == nil then
+		return 
+	end
 	
+	--显示上一个
+	local tNewTop = getStackTop()
+	if tNewTop and tNewTop.Depth == tTop.Depth then
+		--
+		
+	end
 	
+	tBackCommand.AnimationType = tTop.AnimationType
+	
+	local tWinClassInstance = self:getWinClassInstance(tTop.WinID)
+	
+	self:playClosingAnimation(tWinClassInstance,tBackCommand)
+end
+
+
+
+--播放窗口打开动画
+function CUIManager:playClosingAnimation(tWinClassInstance,tCloseCommand)
+	--
+	local nAnimationType = tCloseCommand.AnimationType
+	
+	--然后根据动画类型，调用相关的动画，并设置回调函数为:onOpeningAnimationFinish
+	--runAnimationWithCallback(nAnimationType,self.onOpeningAnimationFinish)
 	
 end
 
---改变窗口状态
---[[function CUIManager:changeWinState(tWinInstance,strChangeType,arg)
-	
-	if strChangeType == WinEvent.OnWinCreate then
-		
-		if not tWinInstance:IsInited() then
-			local uiObject = arg
-			tWinInstance:InitResource(uiObject)
-			tWinInstance:onInit()
-			self:postUIEevent(WinEvent.OnWinCreate,tWinInstance:GetId())
-		end
-		
-	elseif strChangeType == WinEvent.OnWinVisible then
-		
-		if tWinInstance:IsInited() and not tWinInstance:IsVisible() then
-			local winArg = arg
-			--触发tWinClassInstance的onVisible回调,WinArg 为传递给窗口的参数
-			--使其可见
-			tWinInstance:SetVisible(true)
-			tWinInstance:onVisible(winArg)
-			self:postUIEevent(WinEvent.OnWinVisible,tWinInstance:GetId())
-		end
-		
-	elseif strChangeType == WinEvent.OnWinShow then
-		
-		if tWinInstance:IsVisible() and not tWinInstance:IsInShow() then
-			local winArg = arg
-			tWinInstance:SetInShow(true)
-			--触发tWinClassInstance的onShow回调
-			tWinInstance:onShow(winArg)
-			self:postUIEevent(WinEvent.OnWinShow,tWinInstance:GetId())
-		end
-		
-	elseif strChangeType == WinEvent.OnWinHide then
-		
-		if tWinInstance:IsInShow() then
-			tWinInstance:SetVisible(false)
-			tWinInstance:onHide()
-			self:postUIEevent(WinEvent.OnWinHide,tWinInstance:GetId())
-		end
-		
-	elseif strChangeType == WinEvent.OnWinClose then
-		
-		if not tWinInstance:IsVisible() and tWinInstance:IsInited() then
-			tWinInstance:SetVisible(false)
-			tWinInstance:onHide()
-			self:postUIEevent(WinEvent.OnWinHide,tWinInstance:GetId())
-		end
-	elseif strChangeType == WinEvent.OnWinRelease then
-		
-		if tWinInstance:IsInited() and not tWinInstance:IsVisible() then
-			tWinInstance:SetVisible(false)
-			tWinInstance:onHide()
-			self:postUIEevent(WinEvent.OnWinHide,tWinInstance:GetId())
-		end
-	end
-end--]]
+function CUIManager:()
+
+end
 
 --抛出UI事件，供对UI状态改变关心的监听者来监听
 function CUIManager:postUIEevent(strEvent,strWinID,...)
@@ -565,6 +574,7 @@ function CUIManager:pushStack(tShowCommand,bInSameLayer)
 	if nDepthOfStack < 1 then
 		--如果当前没有层级，只能添加在新建的层级
 		self.WindowMuiltyStack[1] = {tShowCommand}
+		
 	else
 		if bInSameLayer then
 			--使用当前层级
@@ -579,8 +589,36 @@ function CUIManager:pushStack(tShowCommand,bInSameLayer)
 		end
 	end
 	
+	tShowCommand.Depth = #self.WindowMuiltyStack
+	
 	--返回被覆盖的上一个元素,先getStackTop再push也可以，这里返回为了方便
 	return tLastSameLayerCommand
+end
+
+
+--入栈
+function CUIManager:popStack()
+	local tPop = nil
+	local nDepthOfStack = self:getDepthOfStack()
+	
+	if nDepthOfStack < 1 then
+		return nil
+	end
+	
+	local tStack = self.WindowMuiltyStack[nDepthOfStack]
+	if #tStack < 1 then
+		return nil
+	end
+	
+	tPop = tStack[#tStack]
+	
+	table.remove(tStack,#tStack)
+	
+	if #tStack < 1 then
+		table.remove(self.WindowMuiltyStack,#self.WindowMuiltyStack)
+	end
+	
+	return tPop
 end
 
 
