@@ -66,7 +66,8 @@ function CUIManager:ctor()
 	self.CommandType = {
 		Show = 1,
 		Close = 2,
-		Back = 3
+		Back = 3,
+		Clear = 4,
 	}
 	
 	--窗口的实例缓存池
@@ -92,7 +93,19 @@ function CUIManager:ctor()
 	--当前激活的Win
 	self.ActivedWin = nil
 	self.IsTouchEnbale = true
+	
+	
+	--监听场景切换事件：因为在场景切换的时候会涉及的资源的加载和释放，所以需要做一些事情
+	--GameDispatcher:AddListener(REPLACE_SCENE, self.onReplaceScene)
+	--GameDispatcher:AddListener(REPLACE_SCENE_FINISH, self.onReplaceSceneFinish)
+	--是否正在切换场景
+	self.IsReplacingScene = false
+	
+	
+	self.RunningOpeningAnimationInstance = nil
+	self.RunningClosingAnimationInstance = nil
 end
+
 
 
 --Public:
@@ -121,7 +134,8 @@ function CUIManager:ShowWindow(strWinID,winArg,tShowArg)
 		ShowArg = tShowArg,
 		CommandType = self.CommandType.Show
 	}
-	table.insert(self.tCommandQueue,tShowCommand)
+	
+	self:InsertInCommandQueue(tShowCommand)
 	
 	--如果当前处理队列还有没结束的任务，退出，等待当前任务执行完再去执行
 	if #self.tCommandQueue > 0 then
@@ -152,7 +166,7 @@ function CUIManager:CloseBack()
 	local tBackCommand = {
 		CommandType = self.CommandType.Back
 	}
-	table.insert(self.tCommandQueue,tBackCommand)
+	self:InsertInCommandQueue(tBackCommand)
 	
 	--如果当前处理队列还有没结束的任务，退出，等待当前任务执行完再去执行
 	if #self.tCommandQueue > 0 then
@@ -171,36 +185,18 @@ end
 function CUIManager:CloseLayer(nDepth)
 	nDepth = nDepth or 0-1
 	
+	local tCloseCommand = {
+		Depth = nDepth,
+		CommandType = self.CommandType.Close
+	}
 	
+	local tClearCommand = {
+		Depth = nDepth,
+		CommandType = self.CommandType.Clear
+	}
+	self:InsertInCommandQueue(tCloseCommand)
 	
-	local nCurrentDepth = self:getDepthOfStack()
-	--[[if nDepth > nCurrentDepth then
-		DEBUG_LOG("CUIManager:CloseWindow","Can Not Close Layer Over Top:",nDepth,nCurrentDepth)
-		return 
-	end--]]
-	
-	local tStack = nil
-	if nDepth > 0 then
-		tStack = self.WindowMuiltyStack[nDepth]
-	else
-		tStack = self.WindowMuiltyStack[nCurrentDepth + nDepth +1]
-	end
-	
-	if tStack == nil then
-		DEBUG_LOG("CUIManager:CloseWindow","Over Depth:",nDepth,nCurrentDepth)
-		return 
-	end
-	
-	for _,tCom in ipairs(tStack) do
-		local uiInstance = self:getWinClassInstance(tCom.WinID)
-		if uiInstance.isStart then
-			uiInstance:Stop()
-			uiInstance:Close()
-		elseif uiInstance.isShow then
-			uiInstance:Close()
-		end
-	end
-	
+	self:InsertInCommandQueue(tClearCommand)
 end
 
 
@@ -227,7 +223,7 @@ end
 --刷新当前可见的win
 function CUIManager:RefreshWin(strWinID,winArg,tShowArg)
 	
-	local tWinClassInstance = self:getWinClassInstance(strWinID)
+	local tWinClassInstance = self:GetWinClassInstance(strWinID)
 	if tWinClassInstance == nil then
 		return
 	end
@@ -239,11 +235,20 @@ function CUIManager:RefreshWin(strWinID,winArg,tShowArg)
 	--do something here to Refresh
 end
 
+--实例管理，整个系统的实例是怎么管理的？到时候统一一下
+function CUIManager.GetInstance()
+	--临时实现：
+	local G_CUIManager = _G["G_CUIManager"]
+	if _G["G_CUIManager"] == nil then
+		G_CUIManager = CUIManager()
+	end
+	
+	return G_CUIManager
+end
 
---private:
 
 --获取对话框的“类”（CUIBase实例）(单例)
-function CUIManager:getWinClassInstance(strWinID)
+function CUIManager:GetWinClassInstance(strWinID)
 	local tWinClassInstance = self.WindowInstanceMap[strWinID]
 	
 	if tWinClassInstance == nil then
@@ -267,8 +272,112 @@ function CUIManager:getWinClassInstance(strWinID)
 	return tWinClassInstance
 end
 
+
+--立刻清除所有
+function CUIManager:ClearAllImmediately()
+	
+	--清除正在运行的动画
+	if self.RunningOpeningAnimationInstance ~= nil then
+		if self.RunningOpeningAnimationInstance.isStart then
+			self.RunningOpeningAnimationInstance:Stop()
+		end
+		
+		if self.RunningOpeningAnimationInstance:IsVisible() then
+			self.RunningOpeningAnimationInstance:SetVisible(false)
+		end
+		
+		if self.RunningOpeningAnimationInstance.isShow then
+			self.RunningOpeningAnimationInstance:Close()
+		end
+	end
+	if self.RunningClosingAnimationInstance ~= nil then
+		if self.RunningClosingAnimationInstance.isStart then
+			self.RunningClosingAnimationInstance:Stop()
+		end
+		
+		if self.RunningClosingAnimationInstance:IsVisible() then
+			self.RunningClosingAnimationInstance:SetVisible(false)
+		end
+		
+		if self.RunningClosingAnimationInstance.isShow then
+			self.RunningClosingAnimationInstance:Close()
+		end
+	end
+	
+	--清除tCommandQueue
+	self.tCommandQueue = {}
+	
+	--清除栈
+	local i = #self.WindowMuiltyStack
+	while i > 1 do
+		local tStack = self.WindowMuiltyStack[i]
+		local j = #tStack
+		while j > 1 do
+			local tCom = tStack[j]
+			local tInstance = self:GetWinClassInstance(tCom.WinID)
+			if tInstance.isStart then
+				tInstance:Stop()
+			end
+			
+			if tInstance:IsVisible() then
+				tInstance:SetVisible(false)
+			end
+			
+			if tInstance.isShow then
+				tInstance:Close()
+			end
+			j = j - 1
+		end
+		
+		i = i - 1
+	end
+	
+	
+	self:setIsTouchEnbale(true)
+end
+
+--异步预加载
+function CUIManager:GetPreLoader()
+	local ModuleType = ModuleType
+	
+end
+
+--同步预加载
+function CUIManager:PreLoad()
+	local ModuleType = ModuleType
+	for strID,tData in pairs(ModuleType) do
+		
+	end
+end
+
+
+--private:-----------------------------------------------------------------------------------------------
+
+function CUIManager:InsertInCommandQueue(tCommand)
+	if self.IsReplacingScene then
+		return
+	end
+	
+	table.insert(self.tCommandQueue,tCommand)
+	
+	--如果当前处理队列还有没结束的任务，退出，等待当前任务执行完再去执行
+	if #self.tCommandQueue > 0 then
+		return
+	end
+	
+	--开启触控屏蔽（在开启窗口的过程中，禁止玩家操作）
+	self:setIsTouchEnbale(false)
+	
+	--执行窗口任务
+	self:processCommand(tCommand)
+end
+
 --执行窗口任务
 function CUIManager:processCommand(tCommand)
+	
+	if self.IsReplacingScene then
+		return
+	end
 	
 	if tCommand.CommandType == self.CommandType.Show then
 		self:processShowCommand(tCommand)
@@ -295,7 +404,7 @@ function CUIManager:processShowCommand(tShowCommand)
 	end
 	
 	--获取并检测对话框关联的类实例
-	local tWinClassInstance = self:getWinClassInstance(strWinID)
+	local tWinClassInstance = self:GetWinClassInstance(strWinID)
 	if tWinClassInstance == nil then
 		return
 	end
@@ -370,6 +479,7 @@ function CUIManager:doShow(tWinClassInstance,tShowCommand)
 		tLastSameLayerWinC = self:pushStackWithLayer(tShowCommand,nLayer)
 	end
 	
+	tWinClassInstance:SetAsLastSibling()--这里利用unity的函数做了层级管理
 	tWinClassInstance:SetVisible(true)
 	tWinClassInstance:Show(winArg)
 	
@@ -409,6 +519,7 @@ end
 --播放窗口打开动画
 function CUIManager:playOpeningAnimation(tWinClassInstance,tShowCommand,tLastSameLayerWinC)
 	--
+	self.RunningOpeningAnimationInstance = tWinClassInstance
 	local nAnimationType = nil
 	
 	if tShowCommand.AnimationType ~= nil then--优先使用本次调用的参数
@@ -431,12 +542,12 @@ end
 
 --播放窗口打开动画结束回调
 function CUIManager:onOpeningAnimationFinish(tWinClassInstance,tShowCommand,tLastSameLayerWinC)
-	
+	self.RunningOpeningAnimationInstance = nil
 	tWinClassInstance:Start(tShowCommand.WinArg)
 	
 	--当一个新的窗口被打开时：同级的上一个窗口被“隐藏”
 	if tLastSameLayerWinC ~= nil then
-		local tLastInstance = self:getWinClassInstance(tLastSameLayerWinC.WinID)
+		local tLastInstance = self:GetWinClassInstance(tLastSameLayerWinC.WinID)
 		tLastInstance:SetVisible(false)
 		tLastInstance:Stop()
 	else
@@ -446,13 +557,145 @@ function CUIManager:onOpeningAnimationFinish(tWinClassInstance,tShowCommand,tLas
 		if tLastLayerStack ~= nil then
 			local tLastLayerTop = tLastLayerStack[#tLastLayerStack]
 			if tLastLayerTop~= nil then
-				local bOveredInstance = self:getWinClassInstance(tLastLayerTop.WinID)
+				local bOveredInstance = self:GetWinClassInstance(tLastLayerTop.WinID)
 				self:postUIEevent(WinEvent.OnWinBeOver,tLastLayerTop.WinID)
 			end
 			
 		end
 	end
 	
+	self:CommpelateCommand()
+end
+
+--执行窗返回任务
+function CUIManager:processBackCommand(tBackCommand)
+		
+	local tTop = self:popStack()
+	if tTop == nil then
+		return 
+	end
+	
+	--显示同层级的上一个
+	local tNewTop = getStackTop()
+	if tNewTop and tNewTop.Depth == tTop.Depth then
+		--
+		local tNewTopInstance = self:GetWinClassInstance(tNewTop.WinID)
+		tNewTopInstance:SetVisible(true)
+		if not tNewTopInstance.isShow then
+			tNewTopInstance:Show()
+		end
+		if not tNewTopInstance.isStart then
+			tNewTopInstance:Start()
+		end
+		
+		self:postUIEevent(WinEvent.OnWinReactived,tNewTop.WinID)
+		
+	end
+	
+	tBackCommand.AnimationType = tTop.AnimationType
+	
+	local tWinClassInstance = self:GetWinClassInstance(tTop.WinID)
+	if tWinClassInstance.isStart then
+		tWinClassInstance:Stop()
+	end
+	
+	self:playClosingAnimation(tWinClassInstance,tBackCommand)
+end
+
+--执行窗口关闭任务
+function CUIManager:processCloseCommand(tCloseCommand)
+	local nCurrentDepth = self:getDepthOfStack()
+	local nDepth = tCloseCommand.Depth
+	
+	local tStack = nil
+	if nDepth > 0 then
+		tStack = self.WindowMuiltyStack[nDepth]
+	else
+		tStack = self.WindowMuiltyStack[nCurrentDepth + nDepth +1]
+	end
+	
+	if tStack == nil or #tStack < 1 then
+		DEBUG_LOG("CUIManager:processCloseCommand","Over Depth:",nDepth,nCurrentDepth)
+		return 
+	end
+	
+	local tLayerTop = tStack[#tStack]
+	
+	tCloseCommand.AnimationType = tLayerTop.AnimationType
+	
+	local tWinClassInstance = self:GetWinClassInstance(tLayerTop.WinID)
+	if tWinClassInstance.isStart then
+		tWinClassInstance:Stop()
+	end
+	
+	self:playClosingAnimation(tWinClassInstance,tCloseCommand)
+	
+end
+
+--执行窗口清理任务
+function CUIManager:processClearCommand(tClearCommand)
+	local nCurrentDepth = self:getDepthOfStack()
+	local nDepth = tClearCommand.Depth
+	
+	local tStack = nil
+	if nDepth > 0 then
+		tStack = self.WindowMuiltyStack[nDepth]
+	else
+		tStack = self.WindowMuiltyStack[nCurrentDepth + nDepth +1]
+	end
+	
+	if tStack == nil then
+		DEBUG_LOG("CUIManager:processCloseCommand","Over Depth:",nDepth,nCurrentDepth)
+		return 
+	end
+	
+	local i = #tStack
+	while i > 1 do
+		local tCom = tStack[i]
+		local uiInstance = self:GetWinClassInstance(tCom.WinID)
+		if uiInstance.isStart then
+			uiInstance:Stop()
+		end
+		
+		if uiInstance:IsVisible() then
+			uiInstance:SetVisible(false)
+		end
+		
+		if uiInstance.isShow then
+			uiInstance:Close()
+		end
+		
+		i = i - 1
+	end
+	
+	
+end
+
+--播放窗口打开动画
+function CUIManager:playClosingAnimation(tWinClassInstance,tCloseCommand)
+	--
+	self.RunningClosingAnimationInstance = tWinClassInstance
+	local nAnimationType = tCloseCommand.AnimationType
+	
+	--然后根据动画类型，调用相关的动画，并设置回调函数为:onClosingAnimationFinish
+	--runAnimationWithCallback(nAnimationType,self.onClosingAnimationFinish)
+	
+end
+
+function CUIManager:onClosingAnimationFinish(tWinClassInstance,tCloseCommand)
+	self.RunningClosingAnimationInstance = nil
+	
+	tWinClassInstance:SetVisible(false)
+	
+	if tWinClassInstance.isShow then
+		tWinClassInstance:Close()
+	end
+	
+	self:CommpelateCommand()
+end
+
+--结束任务
+function CUIManager:CommpelateCommand()
 	--一个完整的对话框打开流程终于走完了
 	--从任务队列中弹出，继续处理下一个任务！
 	table.remove(self.tCommandQueue,1)
@@ -465,57 +708,26 @@ function CUIManager:onOpeningAnimationFinish(tWinClassInstance,tShowCommand,tLas
 	end
 end
 
-
---执行窗口关闭任务
-function CUIManager:processCloseCommand(tCloseCommand)
-	
-	
-	
-end
-
---执行窗返回任务
-function CUIManager:processBackCommand(tBackCommand)
-		
-	local tTop = self:popStack()
-	if tTop == nil then
-		return 
-	end
-	
-	--显示上一个
-	local tNewTop = getStackTop()
-	if tNewTop and tNewTop.Depth == tTop.Depth then
-		--
-		
-	end
-	
-	tBackCommand.AnimationType = tTop.AnimationType
-	
-	local tWinClassInstance = self:getWinClassInstance(tTop.WinID)
-	
-	self:playClosingAnimation(tWinClassInstance,tBackCommand)
-end
-
-
-
---播放窗口打开动画
-function CUIManager:playClosingAnimation(tWinClassInstance,tCloseCommand)
-	--
-	local nAnimationType = tCloseCommand.AnimationType
-	
-	--然后根据动画类型，调用相关的动画，并设置回调函数为:onOpeningAnimationFinish
-	--runAnimationWithCallback(nAnimationType,self.onOpeningAnimationFinish)
-	
-end
-
-function CUIManager:()
-
-end
-
 --抛出UI事件，供对UI状态改变关心的监听者来监听
 function CUIManager:postUIEevent(strEvent,strWinID,...)
 	
 	--使用当前项目的事件分发系统
 	GameDispatcher:DispatchEvent(strEvent,strWinID,...)
+end
+
+
+function CUIManager.onReplaceScene()
+	local self = CUIManager.GetInstance()
+	
+	self.IsReplacingScene = true
+	
+	self:ClearAllImmediately()
+end
+
+function CUIManager:onReplaceSceneFinish()
+	local self = CUIManager.GetInstance()
+		
+	self.IsReplacingScene = false
 end
 
 -------------
@@ -552,7 +764,7 @@ function CUIManager:pushStackWithLayer(tShowCommand,nLayer)
 	end
 	
 	--获取上一个窗口的层级
-	local tLastInstance = self:getWinClassInstance(tTopElement.WinID)
+	local tLastInstance = self:GetWinClassInstance(tTopElement.WinID)
 	local nLastLayer = tLastInstance:GetLayer()
 	
 	--如果新打开的窗口的层级比上一个窗口的层级高，则用更高的层级打开新窗口
