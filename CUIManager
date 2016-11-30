@@ -235,18 +235,6 @@ function CUIManager:RefreshWin(strWinID,winArg,tShowArg)
 	--do something here to Refresh
 end
 
---实例管理，整个系统的实例是怎么管理的？到时候统一一下
-function CUIManager.GetInstance()
-	--临时实现：
-	local G_CUIManager = _G["G_CUIManager"]
-	if _G["G_CUIManager"] == nil then
-		G_CUIManager = CUIManager()
-	end
-	
-	return G_CUIManager
-end
-
-
 --获取对话框的“类”（CUIBase实例）(单例)
 function CUIManager:GetWinClassInstance(strWinID)
 	local tWinClassInstance = self.WindowInstanceMap[strWinID]
@@ -336,20 +324,70 @@ function CUIManager:ClearAllImmediately()
 	self:setIsTouchEnbale(true)
 end
 
---异步预加载
-function CUIManager:GetPreLoader()
+
+--预加载
+function CUIManager:PreLoad(tLoadList,fCallBack)
 	local ModuleType = ModuleType
+	local nPercent = 0--
 	
-end
-
---同步预加载
-function CUIManager:PreLoad()
-	local ModuleType = ModuleType
-	for strID,tData in pairs(ModuleType) do
-		
+	if tLoadList == nil then
+		tLoadList = {}
+		for strID,tData in pairs(ModuleType) do
+			if tData.IsPreLoad then
+				table.insert(tLoadList,strID)
+			end
+		end
 	end
+
+	self.preLoadIndex = 0
+	self.preLoadLenth = #tLoadList
+	
+	if self.preLoadLenth == 0 then
+		fCallBack()
+		return
+	end
+	
+	local plcb = function ()
+			
+			self.preLoadIndex = self.preLoadIndex + 1
+			
+			if self.preLoadIndex > preLoadLenth then
+				self.preLoadIndex = 0
+				self.preLoadLenth = 0
+				fCallBack()
+				return
+			end
+			
+			local strID = tLoadList[self.preLoadIndex]
+			local tData = ModuleType[strID]
+			--实例先行！
+			self:GetWinClassInstance(strID)
+			self:LoadUIRes(tData.ResourceName,plcb)
+		end
+	
+	plcb()
 end
 
+--获取预加载进度
+function CUIManager:GetPreLoadPercent()
+	if self.preLoadLenth == 0 then
+		return 1
+	end
+	
+	return self.preLoadIndex/self.preLoadLenth
+end
+
+
+--实例管理，整个系统的实例是怎么管理的？到时候统一一下
+function CUIManager.GetInstance()
+	--临时实现：
+	local G_CUIManager = _G["G_CUIManager"]
+	if _G["G_CUIManager"] == nil then
+		G_CUIManager = CUIManager()
+	end
+	
+	return G_CUIManager
+end
 
 --private:-----------------------------------------------------------------------------------------------
 
